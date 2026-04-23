@@ -28,7 +28,16 @@ def calcular_diarias(inicio, fim):
         return dias + 0.5
     else:
         return dias
+        
+def listar_funcionarios():
+    conn = conectar()
+    cur = conn.cursor()
 
+    cur.execute("SELECT id, nome FROM funcionarios")
+    dados = cur.fetchall()
+
+    conn.close()
+    return dados
 
 st.title("Controle de Diárias")
 
@@ -61,7 +70,15 @@ if st.button("Salvar Funcionário"):
 # ===============================
 st.header("Nova Viagem")
 
-funcionario_id = st.number_input("ID Funcionário", min_value=1)
+funcionarios = listar_funcionarios()
+
+if funcionarios:
+    opcoes = {nome: id for id, nome in funcionarios}
+
+    nome_selecionado = st.selectbox("Funcionário", list(opcoes.keys()))
+    funcionario_id = opcoes[nome_selecionado]
+else:
+    st.warning("Nenhum funcionário cadastrado")
 
 inicio = st.datetime_input("Data início")
 fim = st.datetime_input("Data fim")
