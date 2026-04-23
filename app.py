@@ -12,9 +12,6 @@ DB_USER = st.secrets["DB_USER"]
 DB_PASS = st.secrets["DB_PASS"]
 DB_PORT = st.secrets["DB_PORT"]
 
-# ===============================
-# CONEXÃO
-# ===============================
 def conectar():
     return psycopg2.connect(
         host=DB_HOST,
@@ -39,7 +36,7 @@ def listar_funcionarios():
     conn = conectar()
     cur = conn.cursor()
     cur.execute("""
-        SELECT id, nome, setor, qualificacao 
+        SELECT id, nome, setor, qualificacao
         FROM funcionarios
         ORDER BY nome
     """)
@@ -47,139 +44,186 @@ def listar_funcionarios():
     conn.close()
     return dados
 
+def total_geral(funcionario_id, ano):
+    conn = conectar()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT COALESCE(SUM(diarias), 0)
+        FROM viagens
+        WHERE funcionario_id = %s AND ano_referencia = %s
+    """, (funcionario_id, ano))
+    total = cur.fetchone()[0]
+    conn.close()
+    return total
+
 def resumo_funcionarios(ano):
     conn = conectar()
     cur = conn.cursor()
     cur.execute("""
-        SELECT f.nome, f.setor, f.qualificacao,
+        SELECT f.id, f.nome, f.setor, f.qualificacao,
                COALESCE(SUM(v.diarias), 0) AS total
         FROM funcionarios f
         LEFT JOIN viagens v 
             ON f.id = v.funcionario_id 
             AND v.ano_referencia = %s
-        GROUP BY f.nome, f.setor, f.qualificacao
-        ORDER BY total DESC
+        GROUP BY f.id, f.nome, f.setor, f.qualificacao
     """, (ano,))
     dados = cur.fetchall()
     conn.close()
     return dados
 
-# ===============================
-# INTERFACE
-# ===============================
-st.title("Controle de Diárias")
-
-# ===============================
-# CADASTRO
-# ===============================
-st.header("Cadastrar Funcionário")
-
-nome = st.text_input("Nome")
-setor = st.text_input("Setor")
-supervisor = st.text_input("Supervisor")
-
-qualificacao = st.selectbox(
-    "Qualificação",
-    ["CC", "AJCC", "COAM", "CTAM"]
-)
-
-if st.button("Salvar Funcionário"):
+def historico_viagens():
     conn = conectar()
     cur = conn.cursor()
-
     cur.execute("""
-        INSERT INTO funcionarios (nome, setor, supervisor, qualificacao)
-        VALUES (%s, %s, %s, %s)
-    """, (nome, setor, supervisor, qualificacao))
-
-    conn.commit()
+        SELECT f.nome, v.data_inicio, v.data_fim, v.natureza,
+               v.diarias, v.autorizado_por, v.justificativa
+        FROM viagens v
+        JOIN funcionarios f ON f.id = v.funcionario_id
+        ORDER BY v.data_inicio DESC
+    """)
+    dados = cur.fetchall()
     conn.close()
-
-    st.success("Funcionário cadastrado!")
-    st.rerun()
+    return dados
 
 # ===============================
-# DASHBOARD AVANÇADO
+# UI
 # ===============================
-st.header("Dashboard Operacional")
+st.set_page_config(layout="wide")
+st.title("Controle de Diárias")
 
-ano = st.number_input("Ano", value=datetime.now().year)
+tabs = st.tabs(["Cadastro", "Viagens", "Simulação", "Dashboard", "Histórico"])
 
-dados = resumo_funcionarios(ano)
+# ===============================
+# ABA 1 - CADASTRO
+# ===============================
+with tabs[0]:
+    st.header("Cadastro de Funcionário")
 
-if dados:
+    nome = st.text_input("Nome")
+    setor = st.text_input("Setor")
+    supervisor = st.text_input("Supervisor")
 
-    df = pd.DataFrame(
-        dados,
-        columns=["Nome", "Setor", "Qualificação", "Diárias"]
+    qualificacao = st.selectbox(
+        "Qualificação",
+        ["CC", "AJCC", "COAM", "CTAM"]
     )
 
-    # ===============================
-    # FILTROS
-    # ===============================
-    st.subheader("Filtros")
+    if st.button("Salvar Funcionário"):
+        conn = conectar()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO funcionarios (nome, setor, supervisor, qualificacao)
+            VALUES (%s, %s, %s, %s)
+        """, (nome, setor, supervisor, qualificacao))
+        conn.commit()
+        conn.close()
+        st.success("Cadastrado!")
+        st.rerun()
 
-    col1, col2, col3 = st.columns(3)
+# ===============================
+# ABA 2 - VIAGENS
+# ===============================
+with tabs[1]:
+    st.header("Registrar Viagem")
 
-    with col1:
-        filtro_nome = st.text_input("Buscar funcionário")
+    funcionarios = listar_funcionarios()
+    opcoes = {f[1]: f[0] for f in funcionarios}
 
-    with col2:
-        setores = ["Todos"] + sorted(df["Setor"].dropna().unique().tolist())
-        filtro_setor = st.selectbox("Setor", setores)
+    nome_sel = st.selectbox("Funcionário", list(opcoes.keys()))
+    funcionario_id = opcoes[nome_sel]
 
-    with col3:
-        qualificacoes = ["Todos"] + sorted(df["Qualificação"].dropna().unique().tolist())
-        filtro_qual = st.selectbox("Qualificação", qualificacoes)
+    inicio = st.datetime_input("Data início")
+    fim = st.datetime_input("Data fim")
 
-    # ===============================
-    # APLICAR FILTROS
-    # ===============================
-    df_filtrado = df.copy()
+    natureza = st.selectbox("Natureza", ["Operacional", "Administrativa"])
 
-    if filtro_nome:
-        df_filtrado = df_filtrado[df_filtrado["Nome"].str.contains(filtro_nome, case=False)]
+    autorizado = st.text_input("Autorizado por")
+    justificativa = st.text_area("Justificativa")
 
-    if filtro_setor != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["Setor"] == filtro_setor]
+    if st.button("Salvar Viagem"):
+        diarias = calcular_diarias(inicio, fim)
+        total_final = total_geral(funcionario_id, inicio.year) + diarias
 
-    if filtro_qual != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["Qualificação"] == filtro_qual]
+        if total_final >= 70 and (not autorizado or not justificativa):
+            st.error("Necessita autorização")
+        else:
+            conn = conectar()
+            cur = conn.cursor()
 
-    # ===============================
-    # KPIs DINÂMICOS
-    # ===============================
-    total_funcionarios = len(df_filtrado)
-    acima_70 = (df_filtrado["Diárias"] >= 70).sum()
-    alerta = ((df_filtrado["Diárias"] >= 60) & (df_filtrado["Diárias"] < 70)).sum()
-    ok = (df_filtrado["Diárias"] < 60).sum()
+            cur.execute("""
+                INSERT INTO viagens (
+                    funcionario_id, data_inicio, data_fim,
+                    natureza, diarias, ano_referencia,
+                    autorizado_por, justificativa
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                funcionario_id, inicio, fim, natureza,
+                diarias, inicio.year, autorizado, justificativa
+            ))
 
-    if acima_70 > 0:
-        st.error(f"{acima_70} acima de 70 diárias")
-    elif alerta > 0:
-        st.warning(f"{alerta} próximos do limite")
-    else:
-        st.success("Situação controlada")
+            conn.commit()
+            conn.close()
+            st.success("Salvo!")
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Funcionários", total_funcionarios)
-    col2.metric("🔴 Bloqueados", acima_70)
-    col3.metric("🟡 Atenção", alerta)
-    col4.metric("🟢 OK", ok)
+# ===============================
+# ABA 3 - SIMULAÇÃO
+# ===============================
+with tabs[2]:
+    st.header("Simulação de Missão")
 
-    # ===============================
-    # GRÁFICO
-    # ===============================
-    st.subheader("Ranking")
+    inicio = st.datetime_input("Início da missão")
+    fim = st.datetime_input("Fim da missão")
 
-    st.bar_chart(df_filtrado.set_index("Nome")["Diárias"])
+    if st.button("Simular"):
+        diarias = calcular_diarias(inicio, fim)
+        dados = resumo_funcionarios(inicio.year)
 
-    # ===============================
-    # TABELA COMPLETA
-    # ===============================
-    st.subheader("Visão Detalhada")
+        resultado = []
+        for _, nome, setor, qual, total in dados:
+            total_final = float(total) + diarias
 
-    st.dataframe(df_filtrado)
+            if total_final >= 70:
+                status = "🔴 BLOQUEADO"
+            elif total_final >= 60:
+                status = "🟡 RISCO"
+            else:
+                status = "🟢 OK"
 
-else:
-    st.info("Sem dados")
+            resultado.append([nome, qual, total, total_final, status])
+
+        df = pd.DataFrame(resultado, columns=[
+            "Nome", "Qualificação", "Atual", "Após Missão", "Status"
+        ])
+
+        st.dataframe(df)
+
+# ===============================
+# ABA 4 - DASHBOARD
+# ===============================
+with tabs[3]:
+    st.header("Dashboard")
+
+    ano = st.number_input("Ano", value=datetime.now().year)
+    dados = resumo_funcionarios(ano)
+
+    if dados:
+        df = pd.DataFrame(dados, columns=[
+            "ID", "Nome", "Setor", "Qualificação", "Diárias"
+        ])
+
+        st.bar_chart(df.set_index("Nome")["Diárias"])
+
+# ===============================
+# ABA 5 - HISTÓRICO
+# ===============================
+with tabs[4]:
+    st.header("Histórico")
+
+    df = pd.DataFrame(historico_viagens(), columns=[
+        "Funcionário", "Início", "Fim",
+        "Natureza", "Diárias", "Autorizado", "Justificativa"
+    ])
+
+    st.dataframe(df)
