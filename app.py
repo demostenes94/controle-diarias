@@ -35,14 +35,22 @@ def calcular_diarias(inicio, fim):
 def listar_funcionarios():
     conn = conectar()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT id, nome, setor, qualificacao
-        FROM funcionarios
-        ORDER BY nome
-    """)
+    cur.execute("SELECT id, nome FROM funcionarios ORDER BY nome")
     dados = cur.fetchall()
     conn.close()
     return dados
+
+def total_geral(funcionario_id, ano):
+    conn = conectar()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT COALESCE(SUM(diarias), 0)
+        FROM viagens
+        WHERE funcionario_id = %s AND ano_referencia = %s
+    """, (funcionario_id, ano))
+    total = cur.fetchone()[0]
+    conn.close()
+    return total
 
 def resumo_funcionarios(ano):
     conn = conectar()
@@ -106,7 +114,61 @@ with tabs[0]:
         st.rerun()
 
 # ===============================
-# SIMULAÇÃO AVANÇADA
+# VIAGENS (CORRIGIDO)
+# ===============================
+with tabs[1]:
+    st.header("Registrar Viagem")
+
+    funcionarios = listar_funcionarios()
+    opcoes = {f[1]: f[0] for f in funcionarios}
+
+    nome_sel = st.selectbox("Funcionário", list(opcoes.keys()))
+    funcionario_id = opcoes[nome_sel]
+
+    inicio = st.datetime_input("Data início")
+    fim = st.datetime_input("Data fim")
+
+    natureza = st.selectbox("Natureza", ["Operacional", "Administrativa"])
+
+    autorizado = st.text_input("Autorizado por")
+    justificativa = st.text_area("Justificativa")
+
+    if st.button("Calcular Diárias"):
+        diarias = calcular_diarias(inicio, fim)
+        st.info(f"Diárias: {diarias}")
+
+    if st.button("Salvar Viagem"):
+        if fim < inicio:
+            st.error("Data inválida")
+        else:
+            diarias = calcular_diarias(inicio, fim)
+            total_final = total_geral(funcionario_id, inicio.year) + diarias
+
+            if total_final >= 70 and (not autorizado or not justificativa):
+                st.error("Necessita autorização")
+            else:
+                conn = conectar()
+                cur = conn.cursor()
+
+                cur.execute("""
+                    INSERT INTO viagens (
+                        funcionario_id, data_inicio, data_fim,
+                        natureza, diarias, ano_referencia,
+                        autorizado_por, justificativa
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    funcionario_id, inicio, fim, natureza,
+                    diarias, inicio.year, autorizado, justificativa
+                ))
+
+                conn.commit()
+                conn.close()
+                st.success("Viagem salva!")
+                st.rerun()
+
+# ===============================
+# SIMULAÇÃO
 # ===============================
 with tabs[2]:
     st.header("Simulação de Missão")
@@ -116,72 +178,52 @@ with tabs[2]:
 
     selecionados = st.multiselect("Selecionar equipe", nomes)
 
-    inicio = st.datetime_input("Início da missão")
-    fim = st.datetime_input("Fim da missão")
+    inicio = st.datetime_input("Início missão")
+    fim = st.datetime_input("Fim missão")
 
-    natureza = st.selectbox("Natureza da missão", ["Operacional", "Administrativa"])
+    natureza = st.selectbox("Natureza missão", ["Operacional", "Administrativa"])
 
     if st.button("Simular"):
+        diarias = calcular_diarias(inicio, fim)
+        dados = resumo_funcionarios(inicio.year)
 
-        if not selecionados:
-            st.warning("Selecione pelo menos um funcionário")
-        elif fim < inicio:
-            st.error("Data inválida")
-        else:
+        resultado = []
 
-            diarias = calcular_diarias(inicio, fim)
-            dados = resumo_funcionarios(inicio.year)
+        for _, nome, setor, qual, total in dados:
+            if nome not in selecionados:
+                continue
 
-            df_base = pd.DataFrame(dados, columns=[
-                "ID", "Nome", "Setor", "Qualificação", "Atual"
-            ])
+            total = float(total)
+            total_final = total + diarias
 
-            df_base = df_base[df_base["Nome"].isin(selecionados)]
+            natureza_atual = total_por_natureza(_, inicio.year)
 
-            resultado = []
+            oper = natureza_atual.get("Operacional", 0)
+            adm = natureza_atual.get("Administrativa", 0)
 
-            for _, row in df_base.iterrows():
-                total = float(row["Atual"])
-                total_final = total + diarias
+            if natureza == "Operacional":
+                oper += diarias
+            else:
+                adm += diarias
 
-                natureza_atual = total_por_natureza(row["ID"], inicio.year)
+            if total_final >= 70:
+                status = "🔴 BLOQUEADO"
+            elif total_final >= 60:
+                status = "🟡 RISCO"
+            else:
+                status = "🟢 OK"
 
-                oper = natureza_atual.get("Operacional", 0)
-                adm = natureza_atual.get("Administrativa", 0)
+            resultado.append([nome, qual, total, total_final, oper, adm, status])
 
-                if natureza == "Operacional":
-                    oper += diarias
-                else:
-                    adm += diarias
+        df = pd.DataFrame(resultado, columns=[
+            "Nome", "Qualificação", "Atual",
+            "Após Missão", "Operacional", "Administrativa", "Status"
+        ])
 
-                if total_final >= 70:
-                    status = "🔴 BLOQUEADO"
-                elif total_final >= 60:
-                    status = "🟡 RISCO"
-                else:
-                    status = "🟢 OK"
-
-                resultado.append([
-                    row["Nome"],
-                    row["Qualificação"],
-                    total,
-                    total_final,
-                    oper,
-                    adm,
-                    status
-                ])
-
-            df = pd.DataFrame(resultado, columns=[
-                "Nome", "Qualificação",
-                "Atual", "Após Missão",
-                "Operacional", "Administrativa",
-                "Status"
-            ])
-
-            st.dataframe(df)
+        st.dataframe(df)
 
 # ===============================
-# DASHBOARD COM FILTRO
+# DASHBOARD
 # ===============================
 with tabs[3]:
     st.header("Dashboard")
@@ -194,13 +236,13 @@ with tabs[3]:
             "ID", "Nome", "Setor", "Qualificação", "Diárias"
         ])
 
-        filtro_qual = st.selectbox(
-            "Filtrar por qualificação",
+        filtro = st.selectbox(
+            "Qualificação",
             ["Todos"] + sorted(df["Qualificação"].dropna().unique())
         )
 
-        if filtro_qual != "Todos":
-            df = df[df["Qualificação"] == filtro_qual]
+        if filtro != "Todos":
+            df = df[df["Qualificação"] == filtro]
 
         st.bar_chart(df.set_index("Nome")["Diárias"])
         st.dataframe(df)
