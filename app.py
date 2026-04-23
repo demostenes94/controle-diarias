@@ -71,8 +71,9 @@ def total_por_natureza(funcionario_id, ano):
 def resumo_funcionarios(ano):
     conn = conectar()
     cur = conn.cursor()
+
     cur.execute("""
-        SELECT f.nome, COALESCE(SUM(v.diarias), 0)
+        SELECT f.nome, COALESCE(SUM(v.diarias), 0) AS total
         FROM funcionarios f
         LEFT JOIN viagens v 
             ON f.id = v.funcionario_id 
@@ -80,8 +81,10 @@ def resumo_funcionarios(ano):
         GROUP BY f.nome
         ORDER BY total DESC
     """, (ano,))
+
     dados = cur.fetchall()
     conn.close()
+
     return dados
 
 # ===============================
