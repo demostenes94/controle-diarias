@@ -111,7 +111,7 @@ if st.button("Salvar Funcionário"):
     st.rerun()
 
 # ===============================
-# VIAGEM + SIMULAÇÃO
+# NOVA VIAGEM
 # ===============================
 st.header("Nova Viagem")
 
@@ -129,7 +129,9 @@ inicio = st.datetime_input("Data início")
 fim = st.datetime_input("Data fim")
 natureza = st.selectbox("Natureza", ["Operacional", "Administrativa"])
 
+# ===============================
 # SIMULAÇÃO
+# ===============================
 if st.button("Simular"):
     if fim < inicio:
         st.error("Data inválida")
@@ -139,17 +141,27 @@ if st.button("Simular"):
         total_final = total_atual + diarias
 
         st.subheader("Simulação")
-        st.info(f"Diárias da missão: {diarias}")
-        st.info(f"Total atual: {total_atual}")
+        st.write(f"Diárias da missão: {diarias}")
+        st.write(f"Total atual: {total_atual}")
 
         if total_final >= 70:
-            st.error(f"{total_final} → BLOQUEADO")
+            st.error(f"{total_final} → NECESSITA AUTORIZAÇÃO")
         elif total_final >= 60:
             st.warning(f"{total_final} → ATENÇÃO")
         else:
             st.success(f"{total_final} → OK")
 
+# ===============================
+# AUTORIZAÇÃO
+# ===============================
+st.subheader("Autorização (se necessário)")
+
+autorizado_por = st.text_input("Autorizado por")
+justificativa = st.text_area("Justificativa")
+
+# ===============================
 # SALVAR
+# ===============================
 if st.button("Salvar Viagem"):
     if fim < inicio:
         st.error("Data inválida")
@@ -158,29 +170,38 @@ if st.button("Salvar Viagem"):
         total_atual = total_geral(funcionario_id, inicio.year)
         total_final = total_atual + diarias
 
+        conn = conectar()
+        cur = conn.cursor()
+
+        # EXIGE AUTORIZAÇÃO
         if total_final >= 70:
-            st.error("Necessita autorização (>=70)")
-        else:
-            conn = conectar()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO viagens (
-                    funcionario_id, data_inicio, data_fim,
-                    natureza, diarias, ano_referencia
-                )
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (
-                funcionario_id,
-                inicio,
-                fim,
-                natureza,
-                diarias,
-                inicio.year
-            ))
-            conn.commit()
-            conn.close()
-            st.success("Viagem salva!")
-            st.rerun()
+            if not autorizado_por or not justificativa:
+                st.error("Preencha autorização e justificativa")
+                st.stop()
+
+        cur.execute("""
+            INSERT INTO viagens (
+                funcionario_id, data_inicio, data_fim,
+                natureza, diarias, ano_referencia,
+                autorizado_por, justificativa
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            funcionario_id,
+            inicio,
+            fim,
+            natureza,
+            diarias,
+            inicio.year,
+            autorizado_por,
+            justificativa
+        ))
+
+        conn.commit()
+        conn.close()
+
+        st.success("Viagem salva!")
+        st.rerun()
 
 # ===============================
 # RESUMO
@@ -190,13 +211,13 @@ st.header("Resumo do Funcionário")
 totais = total_por_natureza(funcionario_id, inicio.year)
 
 for nat, total in totais:
-    st.write(f"{nat}: {total}")
+    st.write(f"{nat}: {total} diárias")
 
 st.subheader("Total Geral")
-st.write(total_geral(funcionario_id, inicio.year))
+st.write(f"Total: {total_geral(funcionario_id, inicio.year)} diárias")
 
 # ===============================
-# DASHBOARD OPERACIONAL
+# DASHBOARD
 # ===============================
 st.header("Dashboard")
 
@@ -205,48 +226,34 @@ dados = resumo_funcionarios(ano)
 
 if dados:
 
-    # KPIs
     total_funcionarios = len(dados)
     acima_70 = sum(1 for _, t in dados if float(t) >= 70)
     alerta = sum(1 for _, t in dados if 60 <= float(t) < 70)
     ok = sum(1 for _, t in dados if float(t) < 60)
 
-    # ALERTA GLOBAL
     if acima_70 > 0:
-        st.error(f"⚠️ {acima_70} funcionário(s) acima de 70 diárias!")
+        st.error(f"{acima_70} funcionário(s) acima de 70")
     elif alerta > 0:
-        st.warning(f"Atenção: {alerta} funcionário(s) próximos do limite")
+        st.warning(f"{alerta} próximo(s) do limite")
     else:
-        st.success("Situação sob controle")
+        st.success("Situação normal")
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Funcionários", total_funcionarios)
-    col2.metric("🔴 Bloqueados", acima_70)
-    col3.metric("🟡 Atenção", alerta)
-    col4.metric("🟢 OK", ok)
+    col2.metric("Bloqueados", acima_70)
+    col3.metric("Atenção", alerta)
+    col4.metric("OK", ok)
 
-    # GRÁFICO
     df = pd.DataFrame(dados, columns=["Funcionário", "Diárias"])
-    df = df.sort_values(by="Diárias", ascending=False)
-
-    st.subheader("Ranking de Diárias")
     st.bar_chart(df.set_index("Funcionário"))
 
-    # PAINEL OPERACIONAL
-    st.subheader("Painel Operacional")
-
     for nome, total in dados:
-        total = float(total)
-
-        col1, col2 = st.columns([3,1])
-        col1.write(f"**{nome}**")
-
         if total >= 70:
-            col2.error(f"{total}")
+            st.error(f"{nome}: {total}")
         elif total >= 60:
-            col2.warning(f"{total}")
+            st.warning(f"{nome}: {total}")
         else:
-            col2.success(f"{total}")
+            st.success(f"{nome}: {total}")
 
 else:
-    st.info("Sem dados para o ano")
+    st.info("Sem dados")
