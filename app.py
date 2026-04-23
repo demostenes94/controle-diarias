@@ -155,7 +155,6 @@ if st.button("Simular"):
 # AUTORIZAÇÃO
 # ===============================
 st.subheader("Autorização (se necessário)")
-
 autorizado_por = st.text_input("Autorizado por")
 justificativa = st.text_area("Justificativa")
 
@@ -170,14 +169,13 @@ if st.button("Salvar Viagem"):
         total_atual = total_geral(funcionario_id, inicio.year)
         total_final = total_atual + diarias
 
-        conn = conectar()
-        cur = conn.cursor()
-
-        # EXIGE AUTORIZAÇÃO
         if total_final >= 70:
             if not autorizado_por or not justificativa:
                 st.error("Preencha autorização e justificativa")
                 st.stop()
+
+        conn = conectar()
+        cur = conn.cursor()
 
         cur.execute("""
             INSERT INTO viagens (
@@ -214,10 +212,10 @@ for nat, total in totais:
     st.write(f"{nat}: {total} diárias")
 
 st.subheader("Total Geral")
-st.write(f"Total: {total_geral(funcionario_id, inicio.year)} diárias")
+st.write(f"{total_geral(funcionario_id, inicio.year)} diárias")
 
 # ===============================
-# DASHBOARD
+# DASHBOARD COMPLETO
 # ===============================
 st.header("Dashboard")
 
@@ -226,26 +224,30 @@ dados = resumo_funcionarios(ano)
 
 if dados:
 
+    # KPIs
     total_funcionarios = len(dados)
     acima_70 = sum(1 for _, t in dados if float(t) >= 70)
     alerta = sum(1 for _, t in dados if 60 <= float(t) < 70)
     ok = sum(1 for _, t in dados if float(t) < 60)
 
+    # ALERTA GLOBAL
     if acima_70 > 0:
-        st.error(f"{acima_70} funcionário(s) acima de 70")
+        st.error(f"⚠️ {acima_70} funcionário(s) acima de 70 diárias!")
     elif alerta > 0:
-        st.warning(f"{alerta} próximo(s) do limite")
+        st.warning(f"Atenção: {alerta} funcionário(s) próximos do limite")
     else:
-        st.success("Situação normal")
+        st.success("Situação sob controle")
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Funcionários", total_funcionarios)
-    col2.metric("Bloqueados", acima_70)
-    col3.metric("Atenção", alerta)
-    col4.metric("OK", ok)
+    col2.metric("🔴 Bloqueados", acima_70)
+    col3.metric("🟡 Atenção", alerta)
+    col4.metric("🟢 OK", ok)
 
     df = pd.DataFrame(dados, columns=["Funcionário", "Diárias"])
     st.bar_chart(df.set_index("Funcionário"))
+
+    st.subheader("Painel Operacional")
 
     for nome, total in dados:
         if total >= 70:
