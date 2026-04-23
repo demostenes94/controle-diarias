@@ -3,11 +3,11 @@ import psycopg2
 from datetime import datetime
 
 # ===== CONFIG (COLOQUE SUA SENHA) =====
-DB_HOST = "db.zwmktbajouwpgrxzfnww.supabase.co"
-DB_NAME = "postgres"
-DB_USER = "postgres"
-DB_PASS = "projetodiarias"
-DB_PORT = "5432"
+DB_HOST = st.secrets["DB_HOST"]
+DB_NAME = st.secrets["DB_NAME"]
+DB_USER = st.secrets["DB_USER"]
+DB_PASS = st.secrets["DB_PASS"]
+DB_PORT = st.secrets["DB_PORT"]
 
 
 def conectar():
